@@ -1,12 +1,11 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
-const db = require('../database');
-const { authenticateToken } = require('../middleware/auth');
-const { encrypt, decrypt, generatePassword, generateAPIKey } = require('../services/crypto');
+const db = require('../database.cjs');
+const { authenticateToken } = require('../middleware/auth.cjs');
+const { encrypt, decrypt, generatePassword, generateAPIKey } = require('../services/crypto.cjs');
 
 const router = express.Router();
 
-// GET /api/passwords - Get all passwords
 router.get('/', authenticateToken, (req, res) => {
   try {
     const { category, type, search } = req.query;
@@ -34,7 +33,6 @@ router.get('/', authenticateToken, (req, res) => {
 
     const passwords = db.prepare(query).all(...params);
 
-    // Decrypt passwords for response
     const decrypted = passwords.map(p => {
       let decryptedPassword;
       try {
@@ -64,16 +62,12 @@ router.get('/', authenticateToken, (req, res) => {
   }
 });
 
-// POST /api/passwords - Create new password
 router.post('/', authenticateToken, (req, res) => {
   try {
     const { title, username, password, url, category, notes, type } = req.body;
 
     if (!title || !password) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Название и пароль обязательны' 
-      });
+      return res.status(400).json({ success: false, error: 'Название и пароль обязательны' });
     }
 
     const id = uuidv4();
@@ -82,29 +76,13 @@ router.post('/', authenticateToken, (req, res) => {
     db.prepare(`
       INSERT INTO passwords (id, user_id, title, username, encrypted_password, url, category, notes, type)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      id, 
-      req.user.id, 
-      title, 
-      username || null, 
-      encryptedPassword, 
-      url || null, 
-      category || 'general', 
-      notes || null, 
-      type || 'password'
-    );
+    `).run(id, req.user.id, title, username || null, encryptedPassword, url || null, category || 'general', notes || null, type || 'password');
 
     res.status(201).json({
       success: true,
       password: {
-        id,
-        title,
-        username: username || null,
-        password,
-        url: url || null,
-        category: category || 'general',
-        notes: notes || null,
-        type: type || 'password',
+        id, title, username: username || null, password, url: url || null,
+        category: category || 'general', notes: notes || null, type: type || 'password',
         createdAt: new Date().toISOString()
       }
     });
@@ -114,48 +92,9 @@ router.post('/', authenticateToken, (req, res) => {
   }
 });
 
-// PUT /api/passwords/:id - Update password
-router.put('/:id', authenticateToken, (req, res) => {
-  try {
-    const { title, username, password, url, category, notes, type } = req.body;
-    const { id } = req.params;
-
-    // Check if password exists and belongs to user
-    const existing = db.prepare('SELECT * FROM passwords WHERE id = ? AND user_id = ?').get(id, req.user.id);
-    if (!existing) {
-      return res.status(404).json({ success: false, error: 'Пароль не найден' });
-    }
-
-    const encryptedPassword = password ? encrypt(password) : existing.encrypted_password;
-
-    db.prepare(`
-      UPDATE passwords 
-      SET title = ?, username = ?, encrypted_password = ?, url = ?, category = ?, notes = ?, type = ?, updated_at = datetime("now")
-      WHERE id = ?
-    `).run(
-      title || existing.title,
-      username !== undefined ? username : existing.username,
-      encryptedPassword,
-      url !== undefined ? url : existing.url,
-      category || existing.category,
-      notes !== undefined ? notes : existing.notes,
-      type || existing.type,
-      id
-    );
-
-    res.json({ success: true });
-  } catch (err) {
-    console.error('Update password error:', err);
-    res.status(500).json({ success: false, error: 'Ошибка обновления пароля' });
-  }
-});
-
-// DELETE /api/passwords/:id - Delete password
 router.delete('/:id', authenticateToken, (req, res) => {
   try {
-    const { id } = req.params;
-
-    const result = db.prepare('DELETE FROM passwords WHERE id = ? AND user_id = ?').run(id, req.user.id);
+    const result = db.prepare('DELETE FROM passwords WHERE id = ? AND user_id = ?').run(req.params.id, req.user.id);
     
     if (result.changes === 0) {
       return res.status(404).json({ success: false, error: 'Пароль не найден' });
@@ -168,7 +107,6 @@ router.delete('/:id', authenticateToken, (req, res) => {
   }
 });
 
-// POST /api/passwords/generate - Generate password
 router.post('/generate', authenticateToken, (req, res) => {
   try {
     const { length, uppercase, lowercase, numbers, symbols } = req.body;
@@ -187,7 +125,6 @@ router.post('/generate', authenticateToken, (req, res) => {
   }
 });
 
-// POST /api/passwords/generate-api-key - Generate API key
 router.post('/generate-api-key', authenticateToken, (req, res) => {
   try {
     const apiKey = generateAPIKey();

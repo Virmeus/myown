@@ -9,5 +9,5 @@ module.exports = {
   uploadDir: path.join(__dirname, '..', 'data', 'uploads'),
   mediaDir: path.join(__dirname, '..', 'data', 'media'),
   maxUploadSize: 100 * 1024 * 1024, // 100MB
-  corsOrigins: process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',') : ['http://localhost:5173', 'http://localhost:3001'],
+  corsOrigins: process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',') : ['http://localhost:5173', 'http://localhost:3001', 'http://localhost:3000'],
 };
