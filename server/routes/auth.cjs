@@ -30,8 +30,7 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Пароль: минимум 6 символов' });
     }
 
-    const salt = await bcrypt.genSalt(12);
-    const passwordHash = await bcrypt.hash(password, salt);
+    const passwordHash = await bcrypt.hash(password, 12);
 
     const userId = uuidv4();
     db.prepare(`INSERT INTO users (id, username, password_hash, email, role) VALUES (?, ?, ?, ?, 'admin')`)
