@@ -43,10 +43,14 @@ class ApiClient {
       throw new Error('Сервер недоступен. Убедитесь что бэкенд запущен (node server/index.js)');
     }
 
-    if (response.status === 401) {
+    if (response.status === 401 || response.status === 403) {
       this.setToken(null);
-      window.location.reload();
-      throw new Error('Сессия истекла');
+      localStorage.removeItem('auth_token');
+      // Небольшая задержка перед перезагрузкой
+      setTimeout(() => {
+        window.location.reload();
+      }, 100);
+      throw new Error('Сессия истекла, войдите снова');
     }
 
     // Проверяем что ответ - JSON
