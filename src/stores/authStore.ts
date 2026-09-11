@@ -13,6 +13,7 @@ interface AuthState {
   authenticated: boolean;
   loading: boolean;
   needsRegistration: boolean;
+  error: string | null;
   login: (username: string, password: string) => Promise<{ success: boolean; error?: string }>;
   register: (username: string, password: string, email?: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
@@ -24,6 +25,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   authenticated: false,
   loading: true,
   needsRegistration: false,
+  error: null,
   
   init: async () => {
     try {
@@ -31,7 +33,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       const checkResult = await api.checkAuth();
       
       if (checkResult.needsRegistration) {
-        set({ loading: false, needsRegistration: true, authenticated: false });
+        set({ loading: false, needsRegistration: true, authenticated: false, error: null });
         return;
       }
 
@@ -45,7 +47,8 @@ export const useAuthStore = create<AuthState>((set) => ({
               user: meResult.user, 
               authenticated: true, 
               loading: false,
-              needsRegistration: false 
+              needsRegistration: false,
+              error: null
             });
             return;
           }
@@ -54,9 +57,13 @@ export const useAuthStore = create<AuthState>((set) => ({
         }
       }
       
-      set({ loading: false, authenticated: false, needsRegistration: false });
-    } catch (err) {
-      set({ loading: false, authenticated: false });
+      set({ loading: false, authenticated: false, needsRegistration: false, error: null });
+    } catch (err: any) {
+      set({ 
+        loading: false, 
+        authenticated: false,
+        error: err.message || 'Не удалось подключиться к серверу'
+      });
     }
   },
   
@@ -65,7 +72,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       const result = await api.login(username, password);
       
       if (result.success && result.user) {
-        set({ user: result.user, authenticated: true, needsRegistration: false });
+        set({ user: result.user, authenticated: true, needsRegistration: false, error: null });
         return { success: true };
       }
       
@@ -80,7 +87,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       const result = await api.register(username, password, email);
       
       if (result.success && result.user) {
-        set({ user: result.user, authenticated: true, needsRegistration: false });
+        set({ user: result.user, authenticated: true, needsRegistration: false, error: null });
         return { success: true };
       }
       
@@ -92,6 +99,6 @@ export const useAuthStore = create<AuthState>((set) => ({
   
   logout: async () => {
     await api.logout();
-    set({ user: null, authenticated: false });
+    set({ user: null, authenticated: false, error: null });
   },
 }));

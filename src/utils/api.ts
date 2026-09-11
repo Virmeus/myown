@@ -32,11 +32,16 @@ class ApiClient {
       headers['Authorization'] = `Bearer ${token}`;
     }
 
-    const response = await fetch(url, {
-      ...options,
-      headers,
-      credentials: 'include',
-    });
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        ...options,
+        headers,
+        credentials: 'include',
+      });
+    } catch (error) {
+      throw new Error('Сервер недоступен. Убедитесь что бэкенд запущен (node server/index.js)');
+    }
 
     if (response.status === 401) {
       this.setToken(null);
@@ -44,7 +49,18 @@ class ApiClient {
       throw new Error('Сессия истекла');
     }
 
-    const data = await response.json();
+    // Проверяем что ответ - JSON
+    const contentType = response.headers.get('content-type');
+    if (!contentType || !contentType.includes('application/json')) {
+      throw new Error('Сервер вернул не-JSON ответ. Проверьте что бэкенд запущен.');
+    }
+
+    let data: any;
+    try {
+      data = await response.json();
+    } catch (error) {
+      throw new Error('Ошибка парсинга ответа сервера');
+    }
 
     if (!response.ok) {
       throw new Error(data.error || `Ошибка ${response.status}`);
