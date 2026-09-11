@@ -1,7 +1,7 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
-const config = require('./config');
+const config = require('./config.cjs');
 
 // Ensure data directory exists
 const dataDir = path.dirname(config.dbPath);

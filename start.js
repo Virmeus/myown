@@ -1,17 +1,13 @@
-#!/usr/bin/env node
+import { spawn, execSync } from 'child_process';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+import { existsSync, mkdirSync } from 'fs';
 
-/**
- * AdminPanel - Start Script
- * Автоматически собирает фронтенд и запускает сервер
- * Запуск: node start.js
- */
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
-const { spawn, execSync } = require('child_process');
-const path = require('path');
-const fs = require('fs');
-
-const distPath = path.join(__dirname, 'dist');
-const needsBuild = !fs.existsSync(distPath) || !fs.existsSync(path.join(distPath, 'index.html'));
+const distPath = join(__dirname, 'dist');
+const needsBuild = !existsSync(distPath) || !existsSync(join(distPath, 'index.html'));
 
 console.log('');
 console.log('╔══════════════════════════════════════════╗');
@@ -38,20 +34,20 @@ if (needsBuild) {
 }
 
 // Шаг 2: Создание директорий для данных
-const dataDir = path.join(__dirname, 'data');
-const uploadsDir = path.join(dataDir, 'uploads');
-const mediaDir = path.join(dataDir, 'media');
+const dataDir = join(__dirname, 'data');
+const uploadsDir = join(dataDir, 'uploads');
+const mediaDir = join(dataDir, 'media');
 
 [dataDir, uploadsDir, mediaDir].forEach(dir => {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
   }
 });
 
 // Шаг 3: Запуск сервера
 console.log('🚀 Запуск сервера...\n');
 
-const server = spawn('node', [path.join(__dirname, 'server', 'index.js')], {
+const server = spawn('node', [join(__dirname, 'server', 'index.cjs')], {
   stdio: 'inherit',
   env: { ...process.env }
 });
