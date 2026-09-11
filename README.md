@@ -3,20 +3,22 @@
 ## 🛡️ Архитектура
 
 ```
-├── server/               # Node.js бэкенд (Express)
-│   ├── index.js          # Главный сервер
-│   ├── config.js         # Конфигурация
-│   ├── database.js       # SQLite база данных
+├── server/               # Node.js бэкенд (Express 5)
+│   ├── index.cjs         # Главный сервер
+│   ├── config.cjs        # Конфигурация
+│   ├── database.cjs      # SQLite база данных
 │   ├── middleware/
-│   │   └── auth.js       # JWT авторизация + аудит
+│   │   └── auth.cjs      # JWT авторизация
 │   ├── routes/
-│   │   ├── auth.js       # Регистрация, вход, сессии
-│   │   ├── passwords.js  # Менеджер паролей (AES-256)
-│   │   ├── media.js      # Скачивание медиа (Cobalt API)
-│   │   ├── cron.js       # Cron задачи (node-cron)
-│   │   └── storage.js    # Облачное хранилище (multer)
-│   └── services/
-│       └── crypto.js     # AES-256-GCM шифрование
+│   │   ├── auth.cjs      # Регистрация, вход, сессии
+│   │   ├── passwords.cjs # Менеджер паролей (AES-256)
+│   │   ├── media.cjs     # Скачивание медиа (Cobalt API)
+│   │   ├── cron.cjs      # Cron задачи (встроенный планировщик)
+│   │   └── storage.cjs   # Облачное хранилище (multer)
+│   ├── services/
+│   │   └── crypto.cjs    # AES-256-GCM шифрование
+│   └── utils/
+│       └── bcrypt.cjs    # Хеширование паролей (pbkdf2)
 ├── src/                  # React фронтенд
 │   ├── App.tsx           # Главный компонент
 │   ├── utils/
@@ -30,6 +32,21 @@
     ├── uploads/          # Загруженные файлы
     └── media/            # Скачанные медиа
 ```
+
+### Зависимости
+
+**Использованы:**
+- Express 5 - веб-фреймворк
+- better-sqlite3 - SQLite база данных
+- jsonwebtoken - JWT токены
+- multer - загрузка файлов
+- uuid - генерация UUID
+
+**Встроенные Node.js модули (замена ESM пакетов):**
+- `crypto.pbkdf2` - хеширование паролей (вместо bcryptjs)
+- `fetch` - HTTP запросы (вместо axios)
+- `setInterval` - cron планировщик (вместо node-cron)
+- `rate-limit middleware` - ограничение запросов (вместо express-rate-limit)
 
 ## 🚀 Запуск в одну команду
 

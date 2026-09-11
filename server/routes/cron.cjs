@@ -1,30 +1,83 @@
 const express = require('express');
-const { v4: uuidv4 } = require('uuid');
 const { exec } = require('child_process');
-const cron = require('node-cron');
+const { v4: uuidv4 } = require('uuid');
 const db = require('../database.cjs');
 const { authenticateToken } = require('../middleware/auth.cjs');
 
 const router = express.Router();
+
+// Простая реализация cron (замена node-cron для совместимости с CommonJS)
 const cronJobs = new Map();
 
-function initializeCronTasks() {
-  try {
-    const tasks = db.prepare('SELECT * FROM cron_tasks WHERE enabled = 1').all();
-    tasks.forEach(task => {
-      if (cron.validate(task.schedule)) {
-        const job = cron.schedule(task.schedule, () => executeCronTask(task.id), {
-          scheduled: true,
-          timezone: 'Europe/Moscow'
-        });
-        cronJobs.set(task.id, job);
-        updateNextRun(task.id, task.schedule);
-      }
-    });
-    console.log(`✅ Initialized ${tasks.length} cron tasks`);
-  } catch (err) {
-    console.error('Error initializing cron tasks:', err);
+function parseCronExpression(expression) {
+  const parts = expression.split(' ');
+  if (parts.length !== 5) return null;
+  
+  const [minute, hour, dayOfMonth, month, dayOfWeek] = parts;
+  
+  return {
+    minute: parseCronField(minute, 0, 59),
+    hour: parseCronField(hour, 0, 23),
+    dayOfMonth: parseCronField(dayOfMonth, 1, 31),
+    month: parseCronField(month, 1, 12),
+    dayOfWeek: parseCronField(dayOfWeek, 0, 6),
+  };
+}
+
+function parseCronField(field, min, max) {
+  if (field === '*') return { type: 'wildcard', values: null };
+  if (field.includes('/')) {
+    const [, step] = field.split('/');
+    return { type: 'step', step: parseInt(step), min, max };
   }
+  if (field.includes(',')) {
+    return { type: 'list', values: field.split(',').map(v => parseInt(v)) };
+  }
+  if (field.includes('-')) {
+    const [start, end] = field.split('-').map(v => parseInt(v));
+    return { type: 'range', start, end };
+  }
+  return { type: 'exact', value: parseInt(field) };
+}
+
+function matchesCronField(field, value) {
+  if (field.type === 'wildcard') return true;
+  if (field.type === 'exact') return field.value === value;
+  if (field.type === 'list') return field.values.includes(value);
+  if (field.type === 'range') return value >= field.start && value <= field.end;
+  if (field.type === 'step') return (value - field.min) % field.step === 0;
+  return false;
+}
+
+function matchesCron(parsed, date) {
+  return (
+    matchesCronField(parsed.minute, date.getMinutes()) &&
+    matchesCronField(parsed.hour, date.getHours()) &&
+    matchesCronField(parsed.dayOfMonth, date.getDate()) &&
+    matchesCronField(parsed.month, date.getMonth() + 1) &&
+    matchesCronField(parsed.dayOfWeek, date.getDay())
+  );
+}
+
+function scheduleCron(expression, callback) {
+  const parsed = parseCronExpression(expression);
+  if (!parsed) return null;
+  
+  let lastRunMinute = -1;
+  
+  const interval = setInterval(() => {
+    const now = new Date();
+    const currentMinute = now.getHours() * 60 + now.getMinutes();
+    
+    if (currentMinute !== lastRunMinute && matchesCron(parsed, now)) {
+      lastRunMinute = currentMinute;
+      callback();
+    }
+  }, 10000); // Проверяем каждые 10 секунд
+  
+  return {
+    stop: () => clearInterval(interval),
+  };
 }
 
 function executeCronTask(taskId) {
@@ -79,6 +132,22 @@ function updateNextRun(taskId, schedule) {
   db.prepare('UPDATE cron_tasks SET next_run = ? WHERE id = ?').run(nextRun.toISOString(), taskId);
 }
 
+function initializeCronTasks() {
+  try {
+    const tasks = db.prepare('SELECT * FROM cron_tasks WHERE enabled = 1').all();
+    tasks.forEach(task => {
+      const job = scheduleCron(task.schedule, () => executeCronTask(task.id));
+      if (job) {
+        cronJobs.set(task.id, job);
+        updateNextRun(task.id, task.schedule);
+      }
+    });
+    console.log(`✅ Initialized ${tasks.length} cron tasks`);
+  } catch (err) {
+    console.error('Error initializing cron tasks:', err);
+  }
+}
+
 setTimeout(initializeCronTasks, 1000);
 
 router.get('/tasks', authenticateToken, (req, res) => {
@@ -98,7 +167,8 @@ router.post('/tasks', authenticateToken, (req, res) => {
       return res.status(400).json({ success: false, error: 'Все поля обязательны' });
     }
 
-    if (!cron.validate(schedule)) {
+    const parsed = parseCronExpression(schedule);
+    if (!parsed) {
       return res.status(400).json({ success: false, error: 'Некорректное cron выражение' });
     }
 
@@ -106,12 +176,11 @@ router.post('/tasks', authenticateToken, (req, res) => {
     db.prepare('INSERT INTO cron_tasks (id, user_id, name, command, schedule, enabled) VALUES (?, ?, ?, ?, ?, 1)')
       .run(id, req.user.id, name, command, schedule);
 
-    const job = cron.schedule(schedule, () => executeCronTask(id), {
-      scheduled: true,
-      timezone: 'Europe/Moscow'
-    });
-    cronJobs.set(id, job);
-    updateNextRun(id, schedule);
+    const job = scheduleCron(schedule, () => executeCronTask(id));
+    if (job) {
+      cronJobs.set(id, job);
+      updateNextRun(id, schedule);
+    }
 
     const task = db.prepare('SELECT * FROM cron_tasks WHERE id = ?').get(id);
     res.status(201).json({ success: true, task });
@@ -130,11 +199,8 @@ router.post('/tasks/:id/toggle', authenticateToken, (req, res) => {
     db.prepare('UPDATE cron_tasks SET enabled = ? WHERE id = ?').run(newEnabled, req.params.id);
 
     if (newEnabled) {
-      if (cron.validate(existing.schedule)) {
-        const job = cron.schedule(existing.schedule, () => executeCronTask(req.params.id), {
-          scheduled: true,
-          timezone: 'Europe/Moscow'
-        });
+      const job = scheduleCron(existing.schedule, () => executeCronTask(req.params.id));
+      if (job) {
         cronJobs.set(req.params.id, job);
         updateNextRun(req.params.id, existing.schedule);
       }

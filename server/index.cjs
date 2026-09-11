@@ -2,7 +2,6 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const cookieParser = require('cookie-parser');
-const rateLimit = require('express-rate-limit');
 const path = require('path');
 const fs = require('fs');
 const config = require('./config.cjs');
@@ -19,22 +18,43 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
-// Rate limiting
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 20,
-  message: { success: false, error: 'Слишком много попыток. Попробуйте позже.' },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
+// Simple rate limiter (замена express-rate-limit для совместимости с CommonJS)
+function createRateLimiter(windowMs, maxRequests) {
+  const requests = new Map();
+  
+  // Очистка старых записей каждые 5 минут
+  setInterval(() => {
+    const now = Date.now();
+    for (const [key, data] of requests.entries()) {
+      if (now - data.start > windowMs) {
+        requests.delete(key);
+      }
+    }
+  }, 5 * 60 * 1000);
+  
+  return (req, res, next) => {
+    const key = req.ip || req.connection.remoteAddress;
+    const now = Date.now();
+    const data = requests.get(key) || { count: 0, start: now };
+    
+    if (now - data.start > windowMs) {
+      data.count = 0;
+      data.start = now;
+    }
+    
+    data.count++;
+    requests.set(key, data);
+    
+    if (data.count > maxRequests) {
+      return res.status(429).json({ success: false, error: 'Слишком много запросов. Попробуйте позже.' });
+    }
+    
+    next();
+  };
+}
 
-const apiLimiter = rateLimit({
-  windowMs: 1 * 60 * 1000,
-  max: 100,
-  message: { success: false, error: 'Слишком много запросов' },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
+const authLimiter = createRateLimiter(15 * 60 * 1000, 20); // 20 запросов за 15 минут
+const apiLimiter = createRateLimiter(60 * 1000, 100); // 100 запросов за минуту
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
@@ -69,10 +89,12 @@ const distPath = path.join(__dirname, '..', 'dist');
 if (fs.existsSync(distPath)) {
   app.use(express.static(distPath));
   
-  app.get('*', (req, res) => {
-    if (!req.path.startsWith('/api')) {
-      res.sendFile(path.join(distPath, 'index.html'));
+  // Catch-all для SPA (Express 5 / path-to-regexp v8 синтаксис)
+  app.get('/*path', (req, res) => {
+    if (req.path.startsWith('/api')) {
+      return res.status(404).json({ success: false, error: 'API endpoint не найден' });
     }
+    res.sendFile(path.join(distPath, 'index.html'));
   });
 }
 
@@ -88,10 +110,6 @@ app.use((err, req, res, next) => {
     success: false, 
     error: process.env.NODE_ENV === 'production' ? 'Внутренняя ошибка сервера' : err.message 
   });
-});
-
-app.use('/api/*', (req, res) => {
-  res.status(404).json({ success: false, error: 'API endpoint не найден' });
 });
 
 // Start server
