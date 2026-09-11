@@ -52,8 +52,10 @@ export const useAuthStore = create<AuthState>((set) => ({
             });
             return;
           }
-        } catch {
+        } catch (err) {
+          // Токен невалиден - очищаем
           api.setToken(null);
+          localStorage.removeItem('auth_token');
         }
       }
       
@@ -98,7 +100,13 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
   
   logout: async () => {
-    await api.logout();
+    try {
+      await api.logout();
+    } catch (e) {
+      // Игнорируем ошибки при выходе
+    }
+    api.setToken(null);
+    localStorage.removeItem('auth_token');
     set({ user: null, authenticated: false, error: null });
   },
 }));

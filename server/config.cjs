@@ -1,10 +1,33 @@
 const path = require('path');
+const fs = require('fs');
+const crypto = require('crypto');
+
+// Файл для хранения секретов
+const secretsFile = path.join(__dirname, '..', 'data', '.secrets.json');
+const dataDir = path.join(__dirname, '..', 'data');
+
+// Создаём директорию если не существует
+if (!fs.existsSync(dataDir)) {
+  fs.mkdirSync(dataDir, { recursive: true });
+}
+
+// Загружаем или создаём секреты
+let secrets = {};
+if (fs.existsSync(secretsFile)) {
+  secrets = JSON.parse(fs.readFileSync(secretsFile, 'utf8'));
+} else {
+  secrets = {
+    jwtSecret: crypto.randomBytes(32).toString('hex'),
+    encryptionKey: crypto.randomBytes(32).toString('hex'),
+  };
+  fs.writeFileSync(secretsFile, JSON.stringify(secrets, null, 2));
+}
 
 module.exports = {
   port: process.env.PORT || 3001,
-  jwtSecret: process.env.JWT_SECRET || 'super_secret_key_change_in_production_' + require('crypto').randomBytes(16).toString('hex'),
+  jwtSecret: process.env.JWT_SECRET || secrets.jwtSecret,
   jwtExpiresIn: '24h',
-  encryptionKey: process.env.ENCRYPTION_KEY || 'aes256_encryption_key_2024_secure',
+  encryptionKey: process.env.ENCRYPTION_KEY || secrets.encryptionKey,
   dbPath: path.join(__dirname, '..', 'data', 'admin.db'),
   uploadDir: path.join(__dirname, '..', 'data', 'uploads'),
   mediaDir: path.join(__dirname, '..', 'data', 'media'),
