@@ -25,7 +25,7 @@ function App() {
 
   useEffect(() => {
     init();
-  }, [init]);
+  }, []);
 
   if (loading) {
     return (

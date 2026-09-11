@@ -1,60 +1,22 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  Clock, Plus, Play, Pause, Trash2, Edit2, Check, X, 
-  Zap, Calendar, Repeat, AlertCircle
+  Clock, Plus, Play, Pause, Trash2, X, 
+  Zap, Calendar, Repeat, Loader2
 } from 'lucide-react';
+import api from '../utils/api';
 
 interface CronTask {
   id: string;
   name: string;
   command: string;
   schedule: string;
-  enabled: boolean;
-  lastRun?: string;
-  nextRun?: string;
-  status: 'idle' | 'running' | 'error';
-  createdAt: string;
-}
-
-const STORAGE_KEY = 'cron_tasks';
-
-function getTasks(): CronTask[] {
-  const data = localStorage.getItem(STORAGE_KEY);
-  return data ? JSON.parse(data) : [
-    {
-      id: '1',
-      name: 'Резервное копирование БД',
-      command: 'pg_dump mydb > backup.sql',
-      schedule: '0 2 * * *',
-      enabled: true,
-      lastRun: new Date(Date.now() - 3600000).toISOString(),
-      status: 'idle',
-      createdAt: new Date().toISOString(),
-    },
-    {
-      id: '2',
-      name: 'Очистка логов',
-      command: 'find /var/log -name "*.log" -mtime +7 -delete',
-      schedule: '0 0 * * 0',
-      enabled: true,
-      lastRun: new Date(Date.now() - 86400000).toISOString(),
-      status: 'idle',
-      createdAt: new Date().toISOString(),
-    },
-    {
-      id: '3',
-      name: 'Мониторинг серверов',
-      command: 'curl -s https://health-check.example.com',
-      schedule: '*/5 * * * *',
-      enabled: false,
-      status: 'idle',
-      createdAt: new Date().toISOString(),
-    },
-  ];
-}
-
-function saveTasks(tasks: CronTask[]): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
+  enabled: number;
+  last_run?: string;
+  next_run?: string;
+  status: string;
+  last_output?: string;
+  last_exit_code?: number;
+  created_at: string;
 }
 
 function parseCronExpression(expr: string): string {
@@ -63,26 +25,22 @@ function parseCronExpression(expr: string): string {
   
   const [minute, hour, dayOfMonth, month, dayOfWeek] = parts;
   
-  let result = '';
+  if (minute === '*' && hour === '*') return 'Каждую минуту';
+  if (minute.startsWith('*/')) return `Каждые ${minute.slice(2)} мин`;
+  if (hour === '*') return `Каждый час в :${minute.padStart(2, '0')}`;
+  if (dayOfWeek === '*') return `Ежедневно в ${hour.padStart(2, '0')}:${minute.padStart(2, '0')}`;
   
-  if (minute === '*' && hour === '*') result = 'Каждую минуту';
-  else if (minute.startsWith('*/')) result = `Каждые ${minute.slice(2)} мин`;
-  else if (hour === '*') result = `Каждый час в :${minute.padStart(2, '0')}`;
-  else if (dayOfWeek === '*') result = `Ежедневно в ${hour.padStart(2, '0')}:${minute.padStart(2, '0')}`;
-  else if (dayOfWeek !== '*') {
-    const days = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
-    const day = parseInt(dayOfWeek);
-    result = `Каждый ${days[day]} в ${hour.padStart(2, '0')}:${minute.padStart(2, '0')}`;
-  } else {
-    result = `${minute}:${hour} ${dayOfMonth}/${month}`;
-  }
+  const days = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
+  const day = parseInt(dayOfWeek);
+  if (!isNaN(day)) return `Каждый ${days[day]} в ${hour.padStart(2, '0')}:${minute.padStart(2, '0')}`;
   
-  return result;
+  return `${minute}:${hour}`;
 }
 
 export const CronManagerPage: React.FC = () => {
-  const [tasks, setTasks] = useState<CronTask[]>(getTasks());
+  const [tasks, setTasks] = useState<CronTask[]>([]);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [newTask, setNewTask] = useState({
     name: '',
     command: '',
@@ -90,58 +48,83 @@ export const CronManagerPage: React.FC = () => {
   });
 
   useEffect(() => {
-    saveTasks(tasks);
-  }, [tasks]);
+    loadTasks();
+  }, []);
 
-  const handleAdd = () => {
+  const loadTasks = async () => {
+    try {
+      const result = await api.getCronTasks();
+      if (result.success) {
+        setTasks(result.tasks);
+      }
+    } catch (err) {
+      console.error('Load tasks error:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAdd = async () => {
     if (!newTask.name || !newTask.command || !newTask.schedule) return;
     
-    const task: CronTask = {
-      id: crypto.randomUUID(),
-      name: newTask.name,
-      command: newTask.command,
-      schedule: newTask.schedule,
-      enabled: true,
-      status: 'idle',
-      createdAt: new Date().toISOString(),
-    };
-    
-    setTasks([task, ...tasks]);
-    setNewTask({ name: '', command: '', schedule: '' });
-    setShowAddModal(false);
+    try {
+      const result = await api.createCronTask(newTask);
+      if (result) {
+        await loadTasks();
+        setNewTask({ name: '', command: '', schedule: '' });
+        setShowAddModal(false);
+      }
+    } catch (err: any) {
+      alert(err.message || 'Ошибка создания задачи');
+    }
   };
 
-  const toggleTask = (id: string) => {
-    setTasks(tasks.map(t => 
-      t.id === id ? { ...t, enabled: !t.enabled } : t
-    ));
+  const toggleTask = async (id: string) => {
+    try {
+      await api.toggleCronTask(id);
+      await loadTasks();
+    } catch (err) {
+      console.error('Toggle task error:', err);
+    }
   };
 
-  const deleteTask = (id: string) => {
-    setTasks(tasks.filter(t => t.id !== id));
+  const deleteTask = async (id: string) => {
+    if (!confirm('Удалить задачу?')) return;
+    try {
+      await api.deleteCronTask(id);
+      setTasks(tasks.filter(t => t.id !== id));
+    } catch (err) {
+      console.error('Delete task error:', err);
+    }
   };
 
-  const runTask = (id: string) => {
-    setTasks(tasks.map(t => 
-      t.id === id ? { ...t, status: 'running' as const, lastRun: new Date().toISOString() } : t
-    ));
-    
-    setTimeout(() => {
-      setTasks(tasks.map(t => 
-        t.id === id ? { ...t, status: 'idle' as const } : t
-      ));
-    }, 3000);
+  const runTask = async (id: string) => {
+    try {
+      await api.runCronTask(id);
+      await loadTasks();
+    } catch (err) {
+      console.error('Run task error:', err);
+    }
   };
 
   const presets = [
     { label: 'Каждую минуту', value: '* * * * *' },
     { label: 'Каждые 5 минут', value: '*/5 * * * *' },
+    { label: 'Каждые 15 минут', value: '*/15 * * * *' },
     { label: 'Каждый час', value: '0 * * * *' },
     { label: 'Каждый день в полночь', value: '0 0 * * *' },
     { label: 'Каждый день в 2:00', value: '0 2 * * *' },
     { label: 'Каждую неделю (Вс)', value: '0 0 * * 0' },
     { label: 'Каждый месяц (1-е)', value: '0 0 1 * *' },
   ];
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="w-8 h-8 text-amber-400 animate-spin" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -153,7 +136,9 @@ export const CronManagerPage: React.FC = () => {
           </div>
           <div>
             <h2 className="text-lg font-semibold text-white">Cron задачи</h2>
-            <p className="text-sm text-gray-400">{tasks.filter(t => t.enabled).length} активных из {tasks.length}</p>
+            <p className="text-sm text-gray-400">
+              {tasks.filter(t => t.enabled).length} активных из {tasks.length} • node-cron
+            </p>
           </div>
         </div>
         
@@ -180,7 +165,6 @@ export const CronManagerPage: React.FC = () => {
               task.enabled ? 'border-gray-800 hover:border-gray-700' : 'border-gray-800/50 opacity-60'
             }`}>
               <div className="flex items-start gap-4">
-                {/* Status indicator */}
                 <div className={`w-3 h-3 rounded-full mt-1.5 flex-shrink-0 ${
                   task.status === 'running' ? 'bg-amber-400 animate-pulse' :
                   task.status === 'error' ? 'bg-red-400' :
@@ -193,6 +177,15 @@ export const CronManagerPage: React.FC = () => {
                     {task.status === 'running' && (
                       <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 animate-pulse">
                         Выполняется
+                      </span>
+                    )}
+                    {task.last_exit_code !== undefined && task.last_exit_code !== null && (
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${
+                        task.last_exit_code === 0 
+                          ? 'bg-emerald-500/10 text-emerald-400' 
+                          : 'bg-red-500/10 text-red-400'
+                      }`}>
+                        exit: {task.last_exit_code}
                       </span>
                     )}
                   </div>
@@ -211,16 +204,32 @@ export const CronManagerPage: React.FC = () => {
                       <Calendar className="w-3.5 h-3.5" />
                       {parseCronExpression(task.schedule)}
                     </span>
-                    {task.lastRun && (
+                    {task.last_run && (
                       <>
                         <span className="text-gray-600">•</span>
-                        <span>Последний запуск: {new Date(task.lastRun).toLocaleString('ru')}</span>
+                        <span>Последний: {new Date(task.last_run).toLocaleString('ru')}</span>
+                      </>
+                    )}
+                    {task.next_run && (
+                      <>
+                        <span className="text-gray-600">•</span>
+                        <span>Следующий: {new Date(task.next_run).toLocaleString('ru')}</span>
                       </>
                     )}
                   </div>
+
+                  {task.last_output && (
+                    <details className="mt-2">
+                      <summary className="text-xs text-gray-500 cursor-pointer hover:text-gray-300">
+                        Вывод последней команды
+                      </summary>
+                      <pre className="mt-1 text-xs bg-gray-800 p-2 rounded text-gray-400 overflow-x-auto max-h-32">
+                        {task.last_output}
+                      </pre>
+                    </details>
+                  )}
                 </div>
 
-                {/* Actions */}
                 <div className="flex items-center gap-1">
                   <button
                     onClick={() => runTask(task.id)}
@@ -279,13 +288,13 @@ export const CronManagerPage: React.FC = () => {
               </div>
 
               <div>
-                <label className="text-sm font-medium text-gray-300 mb-1 block">Команда</label>
+                <label className="text-sm font-medium text-gray-300 mb-1 block">Команда (shell)</label>
                 <input
                   type="text"
                   value={newTask.command}
                   onChange={(e) => setNewTask({ ...newTask, command: e.target.value })}
                   className="w-full bg-gray-800/50 border border-gray-700 rounded-lg px-4 py-2.5 text-white font-mono text-sm placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-amber-500/50"
-                  placeholder="/path/to/script.sh"
+                  placeholder="echo 'Hello World' || /path/to/script.sh"
                 />
               </div>
 
@@ -306,7 +315,6 @@ export const CronManagerPage: React.FC = () => {
                 )}
               </div>
 
-              {/* Presets */}
               <div>
                 <label className="text-sm font-medium text-gray-300 mb-2 block">Шаблоны расписания</label>
                 <div className="flex flex-wrap gap-2">

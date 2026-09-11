@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Key, Plus, Search, Eye, EyeOff, Copy, Trash2, RefreshCw, 
-  Shield, Edit2, Check, X, KeyRound
+  Shield, Edit2, Check, X, KeyRound, Loader2
 } from 'lucide-react';
-import { generatePassword, generateAPIKey } from '../utils/crypto';
+import api from '../utils/api';
 
 interface PasswordEntry {
   id: string;
@@ -17,26 +17,14 @@ interface PasswordEntry {
   type: 'password' | 'api_key' | 'token';
 }
 
-const STORAGE_KEY = 'password_manager_entries';
-
-function getEntries(): PasswordEntry[] {
-  const data = localStorage.getItem(STORAGE_KEY);
-  return data ? JSON.parse(data) : [];
-}
-
-function saveEntries(entries: PasswordEntry[]): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
-}
-
 export const PasswordManagerPage: React.FC = () => {
-  const [entries, setEntries] = useState<PasswordEntry[]>(getEntries());
+  const [entries, setEntries] = useState<PasswordEntry[]>([]);
   const [search, setSearch] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
   const [visiblePasswords, setVisiblePasswords] = useState<Set<string>>(new Set());
   const [copied, setCopied] = useState<string | null>(null);
-  const [editingId, setEditingId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
   
-  // Add form state
   const [newEntry, setNewEntry] = useState<Partial<PasswordEntry>>({
     title: '',
     username: '',
@@ -48,14 +36,29 @@ export const PasswordManagerPage: React.FC = () => {
   });
 
   useEffect(() => {
-    saveEntries(entries);
-  }, [entries]);
+    loadPasswords();
+  }, []);
 
-  const filteredEntries = entries.filter(entry =>
-    entry.title.toLowerCase().includes(search.toLowerCase()) ||
-    entry.username.toLowerCase().includes(search.toLowerCase()) ||
-    entry.category.toLowerCase().includes(search.toLowerCase())
-  );
+  const loadPasswords = async () => {
+    try {
+      setLoading(true);
+      const result = await api.getPasswords({ search: search || undefined });
+      if (result.success) {
+        setEntries(result.passwords);
+      }
+    } catch (err) {
+      console.error('Load passwords error:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      loadPasswords();
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search]);
 
   const togglePasswordVisibility = (id: string) => {
     const newVisible = new Set(visiblePasswords);
@@ -73,41 +76,62 @@ export const PasswordManagerPage: React.FC = () => {
     setTimeout(() => setCopied(null), 2000);
   };
 
-  const handleAdd = () => {
+  const handleAdd = async () => {
     if (!newEntry.title || !newEntry.password) return;
     
-    const entry: PasswordEntry = {
-      id: crypto.randomUUID(),
-      title: newEntry.title || '',
-      username: newEntry.username || '',
-      password: newEntry.password || '',
-      url: newEntry.url,
-      category: newEntry.category || 'general',
-      notes: newEntry.notes,
-      createdAt: new Date().toISOString(),
-      type: newEntry.type || 'password',
-    };
-    
-    setEntries([entry, ...entries]);
-    setNewEntry({ title: '', username: '', password: '', url: '', category: 'general', notes: '', type: 'password' });
-    setShowAddModal(false);
+    try {
+      const result = await api.createPassword(newEntry);
+      if (result) {
+        await loadPasswords();
+        setNewEntry({ title: '', username: '', password: '', url: '', category: 'general', notes: '', type: 'password' });
+        setShowAddModal(false);
+      }
+    } catch (err) {
+      console.error('Add password error:', err);
+    }
   };
 
-  const handleDelete = (id: string) => {
-    setEntries(entries.filter(e => e.id !== id));
+  const handleDelete = async (id: string) => {
+    if (!confirm('Удалить эту запись?')) return;
+    try {
+      await api.deletePassword(id);
+      setEntries(entries.filter(e => e.id !== id));
+    } catch (err) {
+      console.error('Delete password error:', err);
+    }
   };
 
-  const handleGeneratePassword = () => {
-    const password = generatePassword(20, { uppercase: true, lowercase: true, numbers: true, symbols: true });
-    setNewEntry({ ...newEntry, password });
+  const handleGeneratePassword = async () => {
+    try {
+      const result = await api.generatePassword({ length: 20 });
+      if (result.success) {
+        setNewEntry({ ...newEntry, password: result.password });
+      }
+    } catch (err) {
+      console.error('Generate password error:', err);
+    }
   };
 
-  const handleGenerateAPIKey = () => {
-    const key = generateAPIKey();
-    setNewEntry({ ...newEntry, password: key, type: 'api_key' });
+  const handleGenerateAPIKey = async () => {
+    try {
+      const result = await api.generateAPIKey();
+      if (result.success) {
+        setNewEntry({ ...newEntry, password: result.apiKey, type: 'api_key' });
+      }
+    } catch (err) {
+      console.error('Generate API key error:', err);
+    }
   };
 
   const categories = ['general', 'social', 'finance', 'work', 'api', 'database'];
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="w-8 h-8 text-violet-400 animate-spin" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -119,7 +143,7 @@ export const PasswordManagerPage: React.FC = () => {
           </div>
           <div>
             <h2 className="text-lg font-semibold text-white">Менеджер паролей и ключей</h2>
-            <p className="text-sm text-gray-400">{entries.length} записей</p>
+            <p className="text-sm text-gray-400">{entries.length} записей • AES-256 шифрование</p>
           </div>
         </div>
         
@@ -146,14 +170,14 @@ export const PasswordManagerPage: React.FC = () => {
 
       {/* Entries List */}
       <div className="space-y-3">
-        {filteredEntries.length === 0 ? (
+        {entries.length === 0 ? (
           <div className="text-center py-12">
             <KeyRound className="w-12 h-12 text-gray-700 mx-auto mb-3" />
             <p className="text-gray-500">Нет сохранённых записей</p>
             <p className="text-sm text-gray-600 mt-1">Нажмите "Добавить" чтобы создать первую запись</p>
           </div>
         ) : (
-          filteredEntries.map((entry) => (
+          entries.map((entry) => (
             <div key={entry.id} className="bg-gray-900/50 border border-gray-800 rounded-xl p-4 hover:border-gray-700 transition-all group">
               <div className="flex items-start gap-4">
                 <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${
@@ -205,12 +229,6 @@ export const PasswordManagerPage: React.FC = () => {
                 </div>
 
                 <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button
-                    onClick={() => setEditingId(entry.id)}
-                    className="p-2 rounded-lg hover:bg-gray-800 text-gray-500 hover:text-gray-300 transition-colors"
-                  >
-                    <Edit2 className="w-4 h-4" />
-                  </button>
                   <button
                     onClick={() => handleDelete(entry.id)}
                     className="p-2 rounded-lg hover:bg-red-500/10 text-gray-500 hover:text-red-400 transition-colors"
@@ -320,16 +338,6 @@ export const PasswordManagerPage: React.FC = () => {
                   onChange={(e) => setNewEntry({ ...newEntry, url: e.target.value })}
                   className="w-full bg-gray-800/50 border border-gray-700 rounded-lg px-4 py-2.5 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-violet-500/50"
                   placeholder="https://..."
-                />
-              </div>
-
-              <div>
-                <label className="text-sm font-medium text-gray-300 mb-1 block">Заметки</label>
-                <textarea
-                  value={newEntry.notes}
-                  onChange={(e) => setNewEntry({ ...newEntry, notes: e.target.value })}
-                  className="w-full bg-gray-800/50 border border-gray-700 rounded-lg px-4 py-2.5 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-violet-500/50 resize-none h-20"
-                  placeholder="Дополнительная информация..."
                 />
               </div>
             </div>

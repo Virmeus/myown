@@ -1,130 +1,151 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Download, Link, Play, Image, Music, FileVideo, 
-  Check, AlertCircle, Loader2, ExternalLink
+  Check, AlertCircle, Loader2, ExternalLink, Trash2
 } from 'lucide-react';
+import api from '../utils/api';
 
 interface DownloadTask {
   id: string;
   url: string;
   platform: string;
   type: string;
-  status: 'pending' | 'downloading' | 'completed' | 'error';
+  status: 'pending' | 'processing' | 'downloading' | 'completed' | 'error';
   progress: number;
   title: string;
-  createdAt: string;
+  created_at: string;
+  completed_at?: string;
+  file_size?: number;
+  error_message?: string;
 }
 
-const platforms = [
-  { id: 'youtube', name: 'YouTube', icon: '▶️', color: 'bg-red-500/10 text-red-400 border-red-500/20' },
-  { id: 'instagram', name: 'Instagram', icon: '📷', color: 'bg-pink-500/10 text-pink-400 border-pink-500/20' },
-  { id: 'tiktok', name: 'TikTok', icon: '🎵', color: 'bg-gray-500/10 text-gray-400 border-gray-500/20' },
-  { id: 'twitter', name: 'Twitter/X', icon: '🐦', color: 'bg-blue-500/10 text-blue-400 border-blue-500/20' },
-  { id: 'facebook', name: 'Facebook', icon: '👤', color: 'bg-blue-600/10 text-blue-300 border-blue-600/20' },
-  { id: 'vimeo', name: 'Vimeo', icon: '🎬', color: 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20' },
-  { id: 'soundcloud', name: 'SoundCloud', icon: '🎧', color: 'bg-orange-500/10 text-orange-400 border-orange-500/20' },
-  { id: 'other', name: 'Другое', icon: '🌐', color: 'bg-gray-500/10 text-gray-400 border-gray-500/20' },
-];
+const platforms: Record<string, { name: string; icon: string; color: string }> = {
+  youtube: { name: 'YouTube', icon: '▶️', color: 'bg-red-500/10 text-red-400 border-red-500/20' },
+  instagram: { name: 'Instagram', icon: '📷', color: 'bg-pink-500/10 text-pink-400 border-pink-500/20' },
+  tiktok: { name: 'TikTok', icon: '🎵', color: 'bg-gray-500/10 text-gray-400 border-gray-500/20' },
+  twitter: { name: 'Twitter/X', icon: '🐦', color: 'bg-blue-500/10 text-blue-400 border-blue-500/20' },
+  facebook: { name: 'Facebook', icon: '👤', color: 'bg-blue-600/10 text-blue-300 border-blue-600/20' },
+  vimeo: { name: 'Vimeo', icon: '🎬', color: 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20' },
+  soundcloud: { name: 'SoundCloud', icon: '🎧', color: 'bg-orange-500/10 text-orange-400 border-orange-500/20' },
+  reddit: { name: 'Reddit', icon: '🔴', color: 'bg-orange-600/10 text-orange-300 border-orange-600/20' },
+  other: { name: 'Другое', icon: '🌐', color: 'bg-gray-500/10 text-gray-400 border-gray-500/20' },
+};
 
-function detectPlatform(url: string): string {
-  if (url.includes('youtube.com') || url.includes('youtu.be')) return 'youtube';
-  if (url.includes('instagram.com')) return 'instagram';
-  if (url.includes('tiktok.com')) return 'tiktok';
-  if (url.includes('twitter.com') || url.includes('x.com')) return 'twitter';
-  if (url.includes('facebook.com') || url.includes('fb.watch')) return 'facebook';
-  if (url.includes('vimeo.com')) return 'vimeo';
-  if (url.includes('soundcloud.com')) return 'soundcloud';
-  return 'other';
+function formatFileSize(bytes: number): string {
+  if (!bytes) return '—';
+  const units = ['Б', 'КБ', 'МБ', 'ГБ'];
+  let i = 0;
+  let size = bytes;
+  while (size >= 1024 && i < units.length - 1) {
+    size /= 1024;
+    i++;
+  }
+  return `${size.toFixed(1)} ${units[i]}`;
 }
 
 export const MediaDownloaderPage: React.FC = () => {
   const [url, setUrl] = useState('');
   const [mediaType, setMediaType] = useState<'auto' | 'video' | 'audio' | 'image'>('auto');
   const [quality, setQuality] = useState('best');
-  const [tasks, setTasks] = useState<DownloadTask[]>(() => {
-    const stored = localStorage.getItem('media_tasks');
-    return stored ? JSON.parse(stored) : [];
-  });
+  const [tasks, setTasks] = useState<DownloadTask[]>([]);
   const [downloading, setDownloading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    loadTasks();
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, []);
+
+  const loadTasks = async () => {
+    try {
+      const result = await api.getMediaTasks();
+      if (result.success) {
+        setTasks(result.tasks);
+      }
+    } catch (err) {
+      console.error('Load tasks error:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Poll for task updates
+  useEffect(() => {
+    const hasActiveTasks = tasks.some(t => t.status === 'processing' || t.status === 'downloading');
+    
+    if (hasActiveTasks) {
+      pollRef.current = setInterval(loadTasks, 2000);
+    } else {
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+    }
+
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, [tasks]);
 
   const detectedPlatform = url ? detectPlatform(url) : null;
 
-  const handleDownload = () => {
+  function detectPlatform(url: string): string {
+    if (url.includes('youtube.com') || url.includes('youtu.be')) return 'youtube';
+    if (url.includes('instagram.com')) return 'instagram';
+    if (url.includes('tiktok.com')) return 'tiktok';
+    if (url.includes('twitter.com') || url.includes('x.com')) return 'twitter';
+    if (url.includes('facebook.com') || url.includes('fb.watch')) return 'facebook';
+    if (url.includes('vimeo.com')) return 'vimeo';
+    if (url.includes('soundcloud.com')) return 'soundcloud';
+    if (url.includes('reddit.com')) return 'reddit';
+    return 'other';
+  }
+
+  const handleDownload = async () => {
     if (!url) return;
     
     setDownloading(true);
-    
-    const platform = detectPlatform(url);
-    const platformInfo = platforms.find(p => p.id === platform);
-    
-    const task: DownloadTask = {
-      id: crypto.randomUUID(),
-      url,
-      platform,
-      type: mediaType === 'auto' ? 'video' : mediaType,
-      status: 'downloading',
-      progress: 0,
-      title: `Медиа с ${platformInfo?.name || 'сайта'}`,
-      createdAt: new Date().toISOString(),
-    };
-
-    setTasks(prev => {
-      const updated = [task, ...prev];
-      localStorage.setItem('media_tasks', JSON.stringify(updated));
-      return updated;
-    });
-
-    // Simulate download progress
-    let progress = 0;
-    const interval = setInterval(() => {
-      progress += Math.random() * 20;
-      if (progress >= 100) {
-        progress = 100;
-        clearInterval(interval);
-        
-        setTasks(prev => {
-          const updated = prev.map(t => 
-            t.id === task.id ? { ...t, status: 'completed' as const, progress: 100 } : t
-          );
-          localStorage.setItem('media_tasks', JSON.stringify(updated));
-          return updated;
-        });
-        setDownloading(false);
-      } else {
-        setTasks(prev => {
-          const updated = prev.map(t => 
-            t.id === task.id ? { ...t, progress: Math.min(progress, 99) } : t
-          );
-          localStorage.setItem('media_tasks', JSON.stringify(updated));
-          return updated;
-        });
+    try {
+      const result = await api.startDownload(url, mediaType === 'auto' ? undefined : mediaType, quality);
+      if (result.success) {
+        setUrl('');
+        await loadTasks();
       }
-    }, 500);
-
-    setUrl('');
+    } catch (err: any) {
+      console.error('Download error:', err);
+    } finally {
+      setDownloading(false);
+    }
   };
 
-  const clearCompleted = () => {
-    const remaining = tasks.filter(t => t.status !== 'completed');
-    setTasks(remaining);
-    localStorage.setItem('media_tasks', JSON.stringify(remaining));
+  const handleDelete = async (taskId: string) => {
+    try {
+      await api.deleteMediaTask(taskId);
+      setTasks(tasks.filter(t => t.id !== taskId));
+    } catch (err) {
+      console.error('Delete task error:', err);
+    }
   };
 
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'completed': return <Check className="w-4 h-4 text-emerald-400" />;
-      case 'downloading': return <Loader2 className="w-4 h-4 text-blue-400 animate-spin" />;
+      case 'processing': case 'downloading': return <Loader2 className="w-4 h-4 text-blue-400 animate-spin" />;
       case 'error': return <AlertCircle className="w-4 h-4 text-red-400" />;
       default: return <Download className="w-4 h-4 text-gray-400" />;
     }
   };
 
-  const getTypeIcon = (type: string) => {
-    switch (type) {
-      case 'video': return <FileVideo className="w-4 h-4" />;
-      case 'audio': return <Music className="w-4 h-4" />;
-      case 'image': return <Image className="w-4 h-4" />;
-      default: return <Play className="w-4 h-4" />;
+  const getStatusText = (status: string) => {
+    switch (status) {
+      case 'completed': return 'Завершено';
+      case 'processing': return 'Обработка...';
+      case 'downloading': return 'Скачивание...';
+      case 'error': return 'Ошибка';
+      default: return 'Ожидание';
     }
   };
 
@@ -137,14 +158,13 @@ export const MediaDownloaderPage: React.FC = () => {
         </div>
         <div>
           <h2 className="text-lg font-semibold text-white">Скачивание медиа</h2>
-          <p className="text-sm text-gray-400">Загрузка контента из социальных сетей</p>
+          <p className="text-sm text-gray-400">Через Cobalt API • YouTube, Instagram, TikTok и др.</p>
         </div>
       </div>
 
       {/* Download Form */}
       <div className="bg-gray-900/50 border border-gray-800 rounded-xl p-6">
         <div className="space-y-4">
-          {/* URL Input */}
           <div>
             <label className="text-sm font-medium text-gray-300 mb-2 block">Ссылка на медиа</label>
             <div className="flex gap-3">
@@ -156,6 +176,7 @@ export const MediaDownloaderPage: React.FC = () => {
                   onChange={(e) => setUrl(e.target.value)}
                   placeholder="Вставьте ссылку на видео, аудио или изображение..."
                   className="w-full bg-gray-800/50 border border-gray-700 rounded-lg pl-10 pr-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition-all"
+                  onKeyDown={(e) => e.key === 'Enter' && handleDownload()}
                 />
               </div>
               <button
@@ -163,18 +184,17 @@ export const MediaDownloaderPage: React.FC = () => {
                 disabled={!url || downloading}
                 className="px-6 py-3 bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white font-medium rounded-lg transition-all shadow-lg shadow-blue-500/20 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
               >
-                <Download className="w-4 h-4" />
+                {downloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
                 <span className="hidden sm:inline">Скачать</span>
               </button>
             </div>
           </div>
 
-          {/* Options */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="text-sm font-medium text-gray-300 mb-2 block">Тип медиа</label>
               <div className="flex gap-2">
-                {(['auto', 'video', 'audio', 'image'] as const).map(type => (
+                {(['auto', 'video', 'audio'] as const).map(type => (
                   <button
                     key={type}
                     onClick={() => setMediaType(type)}
@@ -184,7 +204,7 @@ export const MediaDownloaderPage: React.FC = () => {
                         : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
                     }`}
                   >
-                    {type === 'auto' ? 'Авто' : type === 'video' ? 'Видео' : type === 'audio' ? 'Аудио' : 'Фото'}
+                    {type === 'auto' ? 'Авто' : type === 'video' ? 'Видео' : 'Аудио'}
                   </button>
                 ))}
               </div>
@@ -206,12 +226,11 @@ export const MediaDownloaderPage: React.FC = () => {
             </div>
           </div>
 
-          {/* Detected Platform */}
           {detectedPlatform && (
             <div className="flex items-center gap-2 p-3 bg-gray-800/50 rounded-lg border border-gray-700">
-              <span className="text-lg">{platforms.find(p => p.id === detectedPlatform)?.icon}</span>
+              <span className="text-lg">{platforms[detectedPlatform]?.icon}</span>
               <span className="text-sm text-gray-300">
-                Обнаружена платформа: <strong>{platforms.find(p => p.id === detectedPlatform)?.name}</strong>
+                Платформа: <strong>{platforms[detectedPlatform]?.name}</strong>
               </span>
             </div>
           )}
@@ -220,8 +239,8 @@ export const MediaDownloaderPage: React.FC = () => {
 
       {/* Supported Platforms */}
       <div className="flex flex-wrap gap-2">
-        {platforms.map(platform => (
-          <div key={platform.id} className={`px-3 py-1.5 rounded-full text-xs font-medium border ${platform.color}`}>
+        {Object.entries(platforms).map(([id, platform]) => (
+          <div key={id} className={`px-3 py-1.5 rounded-full text-xs font-medium border ${platform.color}`}>
             {platform.icon} {platform.name}
           </div>
         ))}
@@ -233,17 +252,20 @@ export const MediaDownloaderPage: React.FC = () => {
           <h3 className="text-sm font-medium text-gray-400">
             Задачи ({tasks.length})
           </h3>
-          {tasks.some(t => t.status === 'completed') && (
-            <button
-              onClick={clearCompleted}
-              className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
-            >
-              Очистить завершённые
-            </button>
-          )}
+          <button
+            onClick={loadTasks}
+            className="text-xs text-gray-500 hover:text-gray-300 transition-colors flex items-center gap-1"
+          >
+            <Loader2 className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
+            Обновить
+          </button>
         </div>
 
-        {tasks.length === 0 ? (
+        {loading && tasks.length === 0 ? (
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="w-8 h-8 text-gray-600 animate-spin" />
+          </div>
+        ) : tasks.length === 0 ? (
           <div className="text-center py-12 bg-gray-900/30 border border-gray-800 rounded-xl">
             <Download className="w-12 h-12 text-gray-700 mx-auto mb-3" />
             <p className="text-gray-500">Нет задач на скачивание</p>
@@ -251,44 +273,67 @@ export const MediaDownloaderPage: React.FC = () => {
           </div>
         ) : (
           tasks.map(task => {
-            const platformInfo = platforms.find(p => p.id === task.platform);
+            const platformInfo = platforms[task.platform] || platforms.other;
             return (
               <div key={task.id} className="bg-gray-900/50 border border-gray-800 rounded-xl p-4">
                 <div className="flex items-center gap-4">
-                  <div className="text-2xl">{platformInfo?.icon}</div>
+                  <div className="text-2xl">{platformInfo.icon}</div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">
-                      <span className="text-sm font-medium text-white truncate">{task.title}</span>
+                      <span className="text-sm font-medium text-white truncate">
+                        {task.title || platformInfo.name}
+                      </span>
                       {getStatusIcon(task.status)}
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${
+                        task.status === 'completed' ? 'bg-emerald-500/10 text-emerald-400' :
+                        task.status === 'error' ? 'bg-red-500/10 text-red-400' :
+                        'bg-blue-500/10 text-blue-400'
+                      }`}>
+                        {getStatusText(task.status)}
+                      </span>
                     </div>
                     <p className="text-xs text-gray-500 truncate mb-2">{task.url}</p>
                     
-                    {task.status === 'downloading' && (
+                    {task.status === 'processing' && (
                       <div className="w-full h-1.5 bg-gray-800 rounded-full overflow-hidden">
                         <div 
-                          className="h-full bg-gradient-to-r from-blue-500 to-cyan-500 rounded-full transition-all duration-300"
-                          style={{ width: `${task.progress}%` }}
+                          className="h-full bg-gradient-to-r from-blue-500 to-cyan-500 rounded-full animate-pulse"
+                          style={{ width: '60%' }}
                         ></div>
                       </div>
                     )}
                     
                     {task.status === 'completed' && (
                       <div className="flex items-center gap-3">
-                        <span className="text-xs text-emerald-400">✓ Завершено</span>
-                        <span className="text-xs text-gray-500 flex items-center gap-1">
-                          {getTypeIcon(task.type)} {task.type}
-                        </span>
+                        {task.file_size && (
+                          <span className="text-xs text-gray-500">{formatFileSize(task.file_size)}</span>
+                        )}
+                        <a
+                          href={api.getMediaDownloadUrl(task.id)}
+                          className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          <Download className="w-3 h-3" /> Скачать файл
+                        </a>
                       </div>
+                    )}
+
+                    {task.status === 'error' && task.error_message && (
+                      <p className="text-xs text-red-400">{task.error_message}</p>
                     )}
                   </div>
                   
-                  <div className="text-right">
-                    <p className="text-xs text-gray-500">
-                      {new Date(task.createdAt).toLocaleTimeString('ru')}
-                    </p>
-                    {task.status === 'downloading' && (
-                      <p className="text-xs text-blue-400">{Math.round(task.progress)}%</p>
-                    )}
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-500">
+                      {new Date(task.created_at).toLocaleTimeString('ru')}
+                    </span>
+                    <button
+                      onClick={() => handleDelete(task.id)}
+                      className="p-1.5 rounded hover:bg-red-500/10 text-gray-500 hover:text-red-400 transition-colors"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
                   </div>
                 </div>
               </div>
