@@ -1,5 +1,4 @@
 const express = require('express');
-const axios = require('axios');
 const { v4: uuidv4 } = require('uuid');
 const path = require('path');
 const fs = require('fs');
@@ -27,20 +26,28 @@ function detectPlatform(url) {
 
 async function downloadViaCobalt(url, options = {}) {
   try {
-    const response = await axios.post('https://api.cobalt.tools/api/json', {
-      url,
-      vCodec: options.quality || 'h264',
-      vQuality: options.quality || '720',
-      aFormat: options.audioFormat || 'mp3',
-      isAudioOnly: options.isAudioOnly || false,
-      filenamePattern: 'basic',
-    }, {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
+    
+    const response = await fetch('https://api.cobalt.tools/api/json', {
+      method: 'POST',
       headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-      timeout: 30000,
+      body: JSON.stringify({
+        url,
+        vCodec: options.quality || 'h264',
+        vQuality: options.quality || '720',
+        aFormat: options.audioFormat || 'mp3',
+        isAudioOnly: options.isAudioOnly || false,
+        filenamePattern: 'basic',
+      }),
+      signal: controller.signal,
     });
-    return response.data;
+    
+    clearTimeout(timeoutId);
+    const data = await response.json();
+    return data;
   } catch (err) {
-    return { status: 'error', error: err.response?.data?.text || err.message || 'Не удалось получить ссылку' };
+    return { status: 'error', error: err.message || 'Не удалось получить ссылку' };
   }
 }
 
@@ -95,9 +102,18 @@ async function processDownload(taskId, url, platform, mediaType, quality) {
       const fileName = `${taskId}.${fileExt}`;
       const filePath = path.join(config.mediaDir, fileName);
 
-      const fileResponse = await axios.get(result.url, { responseType: 'stream', timeout: 120000 });
+      const fileResponse = await fetch(result.url);
+      if (!fileResponse.ok) throw new Error(`HTTP ${fileResponse.status}`);
+      
       const writer = fs.createWriteStream(filePath);
-      fileResponse.data.pipe(writer);
+      const reader = fileResponse.body.getReader();
+      
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        writer.write(Buffer.from(value));
+      }
+      writer.end();
 
       await new Promise((resolve, reject) => {
         writer.on('finish', resolve);
